@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Map UI - Closest Stores</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 900px; margin: 28px auto; padding: 0 16px; }
+    h1 { margin: 0 0 6px; }
+    .muted { color:#666; font-size: 0.95rem; }
+    .panel { border:1px solid #ddd; border-radius:14px; padding:14px; margin:12px 0; }
+    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    input { flex:1; min-width:280px; padding:10px 12px; border:1px solid #ccc; border-radius:10px; }
+    button { padding:10px 14px; border:1px solid #ccc; border-radius:10px; background:#f7f7f7; cursor:pointer; }
+    button:hover { background:#eee; }
+    .pill { display:inline-block; padding:4px 10px; border-radius:999px; border:1px solid #ddd; font-size:0.85rem; }
+    .card { border:1px solid #e2e2e2; border-radius:14px; padding:12px; margin:10px 0; }
+    .card-title { display:flex; justify-content:space-between; gap:10px; }
+    .mono { font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+
+  <h1>Find the 10 closest stores</h1>
+  <div class="muted">
+    Enter a full address → converts to latitude/longitude → shows 10 nearest stores.
+  </div>
+
+  <div class="panel">
+    <div class="row">
+      <input id="address" placeholder="Try: 65-30 Kissena Blvd, Queens, NY 11367" />
+      <button id="addrBtn">Search by Address</button>
+      <button id="clearBtn">Clear</button>
+      <span class="pill" id="status">Loading Google…</span>
+    </div>
+    <div class="muted" style="margin-top:8px;">
+      Tip: include city + state for best results.
+    </div>
+  </div>
+
+  <div class="panel">
+    <b>Results (closest 10)</b>
+    <div id="results"></div>
+  </div>
+
+<script>
+  // ------------------ Dummy stores (later replace from DB/API) ------------------
+  const stores = [
+    { id: 1,  name: "Queens Mini Mart",     lat: 40.7349, lon: -73.8150, address: "Main St, Queens, NY" },
+    { id: 2,  name: "Fresh Corner Grocery", lat: 40.7412, lon: -73.8209, address: "Kissena Blvd, Queens, NY" },
+    { id: 3,  name: "Astoria Market",       lat: 40.7644, lon: -73.9235, address: "30th Ave, Queens, NY" },
+    { id: 4,  name: "LIC Pharmacy",         lat: 40.7447, lon: -73.9488, address: "Jackson Ave, Queens, NY" },
+    { id: 5,  name: "Manhattan QuickStop",  lat: 40.7510, lon: -73.9900, address: "8th Ave, New York, NY" },
+    { id: 6,  name: "SoHo Convenience",     lat: 40.7240, lon: -74.0000, address: "Prince St, New York, NY" },
+    { id: 7,  name: "Brooklyn General",     lat: 40.6932, lon: -73.9890, address: "Court St, Brooklyn, NY" },
+    { id: 8,  name: "DUMBO Pantry",         lat: 40.7033, lon: -73.9896, address: "Water St, Brooklyn, NY" },
+    { id: 9,  name: "Bronx Essentials",     lat: 40.8205, lon: -73.9130, address: "Grand Concourse, Bronx, NY" },
+    { id:10,  name: "Harlem Food Hub",      lat: 40.8116, lon: -73.9465, address: "Lenox Ave, New York, NY" },
+    { id:11,  name: "Flushing Supplies",    lat: 40.7590, lon: -73.8300, address: "Roosevelt Ave, Queens, NY" },
+    { id:12,  name: "Jamaica Value Store",  lat: 40.7027, lon: -73.7890, address: "Jamaica Ave, Queens, NY" },
+  ];
+
+  // ------------------ Haversine distance (miles) ------------------
+  function haversineMiles(lat1, lon1, lat2, lon2) {
+    const R = 3958.8;
+    const toRad = d => d * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat/2)**2 +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+      Math.sin(dLon/2)**2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+  }
+
+  const statusEl  = document.getElementById("status");
+  const resultsEl = document.getElementById("results");
+  const addressEl = document.getElementById("address");
+
+  function setStatus(t) { statusEl.textContent = t; }
+
+  function renderStores(centerLat, centerLon, label) {
+    setStatus(label);
+
+    const ranked = stores
+      .map(s => ({ ...s, dist: haversineMiles(centerLat, centerLon, s.lat, s.lon) }))
+      .sort((a, b) => a.dist - b.dist)
+      .slice(0, 10);
+
+    resultsEl.innerHTML = ranked.map(s => `
+      <div class="card">
+        <div class="card-title">
+          <b>${s.name}</b>
+          <span class="mono">${s.dist.toFixed(2)} mi</span>
+        </div>
+        <div class="muted">${s.address}</div>
+      </div>
+    `).join("");
+  }
+
+  function clearAll() {
+    addressEl.value = "";
+    resultsEl.innerHTML = "";
+    setStatus("Ready");
+  }
+
+  // ------------------ Google Geocoder (Maps JS API) ------------------
+  let geocoder = null;
+
+  // Called by Google script callback
+  function initGoogle() {
+    geocoder = new google.maps.Geocoder();
+    setStatus("Ready");
+  }
+  window.initGoogle = initGoogle;
+
+  function geocodeAddress() {
+    const addr = addressEl.value.trim();
+    if (!addr) { setStatus("Type an address."); return; }
+    if (!geocoder) { setStatus("Google not loaded."); return; }
+
+    setStatus("Geocoding…");
+
+    geocoder.geocode({ address: addr }, (results, status) => {
+      if (status !== "OK" || !results || !results.length) {
+        // If key/referrer/billing is wrong, you'll see REQUEST_DENIED
+        setStatus("Geocode failed: " + status);
+        return;
+      }
+      const loc = results[0].geometry.location;
+      renderStores(loc.lat(), loc.lng(), "Using address: " + addr);
+    });
+  }
+
+  document.getElementById("addrBtn").addEventListener("click", geocodeAddress);
+  document.getElementById("clearBtn").addEventListener("click", clearAll);
+  addressEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") geocodeAddress();
+  });
+</script>
+
+<!-- IMPORTANT:
+  1) Enable "Maps JavaScript API" in Google Cloud
+  2) Restrict key to: https://anupa3.github.io/*
+-->
+<script async defer
+  src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDHeSdEh74ib17d294qNyntZ1Dgza_kN-8&callback=initGoogle">
+</script>
+
+</body>
+</html>
